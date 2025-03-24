@@ -4,6 +4,7 @@ import json
 import requests
 import hashlib
 import asyncio
+import pandas as pd
 from pathlib import Path
 from datetime import datetime
 import unicodedata
@@ -617,6 +618,7 @@ def main():
             }
         }
         
+        # File processing progress
         progress_bar = st.progress(0)
         status_text = st.empty()
         
@@ -632,7 +634,6 @@ def main():
                             status_text.text(f"Processing {company} {doc_type}: {file.name}")
                             content = file.getvalue()
                             
-                            # Call process_pdf with all required arguments
                             analysis = asyncio.run(
                                 process_pdf(
                                     content,
@@ -642,17 +643,12 @@ def main():
                                     doc_type
                                 )
                             )
-                            print("ANALYSIS DONE 1")
                             
                             processed += 1
                             progress_bar.progress(processed / total_files)
-                            print("ANALYSIS DONE 2")
                             
                             st.success(f"Processed {file.name}")
-                            print("ANALYSIS DONE 3")
-
                             st.json(analysis["themes"], expanded=False)
-                            print("ANALYSIS DONE 4")
 
                             if company == "Accenture":
                                 for theme, quotes in analysis["themes"].items():
@@ -662,21 +658,10 @@ def main():
                                         "source_file": q.get("source_file", "Unknown File"),
                                         "doc_type": q.get("doc_type", "Document")
                                     } for q in quotes])
-                                print("ANALYSIS DONE 5")
-
                             else:
-                                # Company name identification
-                                print("ANALYSIS DONE 6")
-
                                 comparator = LLMThemeComparator("sk-default-PPcvzcCe4cJRRP8JkEXnT51woYJUXzMZ")
-                                print("ANALYSIS DONE 7")
-
                                 identified_name = comparator.identify_company_name(analysis["themes"])
-                                print("ANALYSIS DONE 8", identified_name)
-
                                 if identified_name != "Other Company":
-                                    print("ANALYSIS DONE 9")
-
                                     st.session_state.other_company_name = identified_name
                                 for theme, quotes in analysis["themes"].items():
                                     st.session_state.other_themes[theme].extend([{
@@ -685,7 +670,6 @@ def main():
                                         "source_file": q.get("source_file", "Unknown File"), 
                                         "doc_type": q.get("doc_type", "Document")
                                     } for q in quotes])
-                                print("ANALYSIS DONE 10")
 
                         except Exception as e:
                             st.error(f"Error processing {file.name}: {str(e)}")
@@ -693,6 +677,7 @@ def main():
         progress_bar.empty()
         status_text.success("✅ All documents processed!")
         
+        # Deduplicate quotes
         for themes in [st.session_state.accenture_themes, st.session_state.other_themes]:
             for theme in themes:
                 seen = set()
@@ -704,12 +689,9 @@ def main():
                         unique_quotes.append(quote)
                 themes[theme] = unique_quotes
 
-        # # Only run comparison if both companies have data
-        # print("st.session_state.accenture_themes", st.session_state.accenture_themes)
-        # print("st.session_state.other_themes", st.session_state.other_themes)
+        # Theme comparison with real-time feedback
         if st.session_state.accenture_themes and st.session_state.other_themes:
             st.subheader("Theme Comparison Analysis")
-            print("ANALYSIS DONE 11")
             
             # Prepare data for comparison
             company1_data = {
@@ -722,12 +704,59 @@ def main():
                 "time_period": f"{selected_year} {selected_quarter}",
                 "themes_data": dict(st.session_state.other_themes)
             }
-            print("ANALYSIS DONE 11", company1_data)
             
             try:
-                # Perform comparison
                 comparator = LLMThemeComparator("sk-default-PPcvzcCe4cJRRP8JkEXnT51woYJUXzMZ")
-                results = comparator.compare_companies(company1_data, company2_data)
+                results = {}
+                
+                # Initialize UI elements for theme analysis
+                st.write("Analyzing themes...")
+                theme_progress_bar = st.progress(0)
+                theme_status_text = st.empty()
+                total_themes = len(comparator.themes)
+                processed_themes = 0
+                
+                # Analyze each theme with feedback
+                comparisons = {}
+                summary_data = []
+                
+                for theme in comparator.themes:
+                    with st.spinner(f"Analyzing theme: {theme}"):
+                        theme_status_text.text(f"Processing theme: {theme}")
+                        company1_quotes = company1_data["themes_data"].get(theme, [])
+                        company2_quotes = company2_data["themes_data"].get(theme, [])
+                        
+                        # Calculate similarity score and reasoning
+                        similarity_score, reasoning = comparator.llm_similarity_analysis(
+                            theme, company1_data["company_name"], company2_data["company_name"],
+                            company1_quotes, company2_quotes
+                        )
+                        
+                        # Generate detailed comparison
+                        comparison = comparator.llm_theme_analysis(
+                            theme, company1_data["company_name"], company2_data["company_name"],
+                            company1_quotes, company2_quotes, similarity_score, reasoning
+                        )
+                        comparisons[theme] = comparison
+                        
+                        # Update summary data
+                        summary_data.append({
+                            "Theme": theme,
+                            "Similarity Score": similarity_score,
+                            f"{company1_data['company_name']} Mentions": len(company1_quotes),
+                            f"{company2_data['company_name']} Mentions": len(company2_quotes),
+                            "Reasoning": reasoning
+                        })
+                        
+                        # Update progress
+                        processed_themes += 1
+                        theme_progress_bar.progress(processed_themes / total_themes)
+                
+                theme_progress_bar.empty()
+                theme_status_text.success("✅ Theme analysis completed!")
+                
+                results["comparisons"] = comparisons
+                results["summary_df"] = pd.DataFrame(summary_data)
                 
                 if results:
                     st.session_state.report_generated = True
