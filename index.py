@@ -6,15 +6,11 @@ import hashlib
 import asyncio
 from pathlib import Path
 from datetime import datetime
-import time
-import markdown
-import pdfkit
 import unicodedata
 from pyzerox import zerox
 from collections import defaultdict
 from typing import Dict, List
 from LLMThemeComparator import LLMThemeComparator
-import base64
 from fpdf import FPDF
 import tempfile
 
